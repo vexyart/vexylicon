@@ -80,6 +80,46 @@ vexylicon create \
 *   `vexylicon preview <input_svg> [output_png]`: Generate a PNG preview of a Vexylicon SVG (requires `cairosvg`).
 *   `vexylicon shape2base <input_svg> [output_base_svg]`: A utility to help convert a simple, flat SVG shape into the dual-contour base template required by Vexylicon.
 
+To iconify an existing set of SVGs with rounded clipping and glass bevels:
+
+```bash
+uv run vexylicon batch path/to/oldicons path/to/icons --quality ultra
+```
+
+The output files use the suffix `_glass.svg`. Artwork scales to the icon canvas
+while retaining its own viewBox, definitions, masks, clipping paths, embedded
+images, and root presentation attributes.
+
+### Scaling and positioning
+
+Both `create` and `batch` accept these options. They affect the entire payload
+SVG; the glass frame and its clipping path stay fixed.
+
+| Option | Meaning |
+| --- | --- |
+| `--scale=0.8` | Fit the artwork to the canvas, then scale it to 80%, about the centre. Default: `1`. |
+| `--size=900` | Set the longest side of the artwork viewport to 900 canvas units. Aspect ratio is preserved. |
+| `--x_off=40` | Shift right by 40 canvas units; negative values shift left. |
+| `--y_off=-20` | Shift up by 20 canvas units; positive values shift down. |
+| `--suffix=-icon` | Batch output names such as `logo-icon.svg`. Default: `_glass`. |
+
+The built-in canvas is 1200×1200 units. `--size` specifies absolute size in
+that coordinate system; `--scale` is a relative multiplier. When combined,
+`--scale` multiplies `--size`. Offsets apply after scaling.
+
+```bash
+# Relative scale with an off-centre position
+uv run vexylicon create --payload logo.svg --output logo-icon.svg \
+    --scale=0.8 --x_off=40 --y_off=-20
+
+# Absolute size, writing beside the source files
+uv run vexylicon batch ./oldicons ./oldicons --size=900 --suffix=-icon
+```
+
+Same-folder batch runs skip SVGs already ending in the selected suffix, so
+rerunning the command does not produce `-icon-icon.svg`. Batch failures return
+a nonzero exit status. No additional dependencies are needed for placement.
+
 ## How to Use (Python API)
 
 For more control or integration into your Python projects, use the Vexylicon API:

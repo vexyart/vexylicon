@@ -42,9 +42,7 @@ class SVGProcessor:
                 msg = "Failed to parse SVG content"
                 raise ValueError(msg)
 
-        self.root = (
-            self.tree if isinstance(self.tree, etree._Element) else self.tree.getroot()
-        )
+        self.root = self.tree if isinstance(self.tree, etree._Element) else self.tree.getroot()
 
     def ns(self, tag: str) -> str:
         """Return namespaced tag for SVG elements.
@@ -112,12 +110,10 @@ class SVGProcessor:
                 elem.set(f"{{{XLINK_NS}}}href", str(value))
                 elem.set("href", str(value))  # Also set modern href
             else:
-                elem.set(key, str(value))
+                elem.set(key.replace("_", "-"), str(value))
         return elem
 
-    def add_gradient(
-        self, gradient_type: str, gradient_id: str, stops: list[dict], **attrs
-    ) -> etree._Element:
+    def add_gradient(self, gradient_type: str, gradient_id: str, stops: list[dict], **attrs) -> etree._Element:
         """Add a gradient definition to the SVG.
 
         Args:
@@ -132,19 +128,19 @@ class SVGProcessor:
         defs = self.get_defs()
 
         tag = "linearGradient" if gradient_type == "linear" else "radialGradient"
-        gradient = self.create_element(
-            tag, id=gradient_id, gradientUnits="userSpaceOnUse", **attrs
-        )
+        gradient = self.create_element(tag, id=gradient_id, gradientUnits="userSpaceOnUse", **attrs)
 
         for stop in stops:
-            stop_elem = self.create_element(
-                "stop", offset=str(stop["offset"]), stop_color=stop["color"]
-            )
+            stop_elem = self.create_element("stop", offset=str(stop["offset"]), stop_color=stop["color"])
             if "opacity" in stop:
                 stop_elem.set("stop-opacity", str(stop["opacity"]))
             gradient.append(stop_elem)
 
-        defs.append(gradient)
+        existing = self.find_by_id(gradient_id)
+        if existing is not None:
+            existing.getparent().replace(existing, gradient)
+        else:
+            defs.append(gradient)
         return gradient
 
     def duplicate_element(self, elem: etree._Element, new_id: str) -> etree._Element:
@@ -195,9 +191,7 @@ class SVGProcessor:
             SVG as string
         """
         # First get the string without XML declaration
-        svg_str = etree.tostring(
-            self.root, encoding="unicode", pretty_print=pretty_print
-        )
+        svg_str = etree.tostring(self.root, encoding="unicode", pretty_print=pretty_print)
         # Add XML declaration manually
         return f'<?xml version="1.0" encoding="UTF-8"?>\n{svg_str}'
 

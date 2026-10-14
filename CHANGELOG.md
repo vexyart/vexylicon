@@ -8,12 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Relative artwork scaling (`--scale`), absolute viewport sizing (`--size`),
+  and canvas-unit offsets (`--x_off`, `--y_off`) for single and batch generation.
+- Configurable batch filename suffix, including repeatable same-folder output.
 - Theme-aware gradient generation with automatic light/dark variants
 - CSS media queries for `prefers-color-scheme` support
 - Proper duplication of gradients with `-light` and `-dark` suffixes
 - Dark mode opacity adjustment (+20% for better visibility)
 
 ### Fixed
+- Return a nonzero exit status when any batch item fails.
+- Preserve complete payload SVGs, including definitions, masks, embedded images,
+  root attributes and viewBox; scale imported artwork to the icon canvas.
+- Add a viewBox to generated icons for scalable embedding.
+- Replace template gradients when applying themes, and emit valid `stop-color`
+  and `pointer-events` attributes.
+- Accept large inline SVG payloads without probing them as filesystem paths.
+- Use explicit element presence checks when applying bevel opacity.
 - Ruff configuration already using correct `exclude` key (not `extend-exclude`)
 
 ### TODO

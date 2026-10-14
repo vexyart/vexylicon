@@ -9,6 +9,7 @@ the creation of liquid-glass SVG effects with theme support.
 from __future__ import annotations
 
 import importlib.resources
+import math
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
@@ -44,6 +45,10 @@ class VexyliconParams:
         opacity_progression: How opacity changes across steps (default: MORE_EXPONENTIAL)
         quality: Preset quality level ('low', 'medium', 'high')
         blur: Blur radius for bevel steps in pixels (default: 0, no blur)
+        scale: Artwork scale relative to the canvas fit, centred (default: 1).
+        size: Absolute longest side of the artwork viewport in canvas units.
+        x_off: Horizontal shift in canvas units; positive moves right.
+        y_off: Vertical shift in canvas units; positive moves down.
     """
 
     steps: int = 24
@@ -52,6 +57,10 @@ class VexyliconParams:
     opacity_progression: OpacityProgression = OpacityProgression.MORE_EXPONENTIAL
     quality: str | None = None
     blur: float = 0.0
+    scale: float = 1.0
+    size: float | None = None
+    x_off: float = 0.0
+    y_off: float = 0.0
 
     def __post_init__(self):
         """Apply quality presets if specified."""
@@ -59,6 +68,13 @@ class VexyliconParams:
             quality_presets = {"low": 8, "medium": 16, "high": 24, "ultra": 32}
             if self.quality in quality_presets:
                 self.steps = quality_presets[self.quality]
+        for name in ("scale", "size", "x_off", "y_off"):
+            value = getattr(self, name)
+            if name == "size" and value is None:
+                continue
+            if not math.isfinite(value) or (name in ("scale", "size") and value <= 0):
+                msg = f"{name} must be finite" + (" and positive" if name in ("scale", "size") else "")
+                raise ValueError(msg)
 
 
 class VexyliconError(Exception):
@@ -76,9 +92,7 @@ class ThemeValidationError(VexyliconError):
 class VexyliconGenerator:
     """Main class for generating liquid-glass SVG effects."""
 
-    def __init__(
-        self, theme: Theme | str = "default", params: VexyliconParams | None = None
-    ):
+    def __init__(self, theme: Theme | str = "default", params: VexyliconParams | None = None):
         """Initialize generator with theme and parameters.
 
         Args:
@@ -117,6 +131,12 @@ class VexyliconGenerator:
         except etree.XMLSyntaxError as e:
             msg = f"Base SVG is malformed: {e}"
             raise InvalidSVGError(msg) from e
+
+        # A viewBox allows the finished icon to scale when embedded or resized.
+        if processor.root.get("viewBox") is None:
+            width = processor.root.get("width", "1200").removesuffix("px")
+            height = processor.root.get("height", "1200").removesuffix("px")
+            processor.root.set("viewBox", f"0 0 {width} {height}")
 
         # Generate bevel steps
         self._generate_bevel_steps(processor)
@@ -165,9 +185,7 @@ class VexyliconGenerator:
             raise InvalidSVGError(msg) from e
 
         # Generate ring paths
-        ring_paths = generate_ring_paths(
-            outer_contour, inner_contour, self.params.steps
-        )
+        ring_paths = generate_ring_paths(outer_contour, inner_contour, self.params.steps)
 
         # Ensure an <path id="inner"> exists for clipping masks
         if processor.find_by_id("inner") is None:
@@ -192,7 +210,7 @@ class VexyliconGenerator:
         # element (if present) and the <path id="mainShape"> definition. This
         # guarantees the bevel rings are not completely covered by an opaque
         # base fill in any renderer.
-        target_elem = outer_use or main_shape
+        target_elem = outer_use if outer_use is not None else main_shape
         min_opacity = 1 / (self.params.steps + 1)
         target_elem.set("fill-opacity", f"{min_opacity:.3f}")
 
@@ -200,9 +218,7 @@ class VexyliconGenerator:
             main_shape.set("fill-opacity", f"{min_opacity:.3f}")
 
         # Create bevel step paths (single set, themeable via gradients)
-        for i, (path_d, opacity) in enumerate(
-            zip(ring_paths, opacities, strict=False), 1
-        ):
+        for i, (path_d, opacity) in enumerate(zip(ring_paths, opacities, strict=False), 1):
             step = processor.create_element(
                 "path",
                 d=path_d,
@@ -220,9 +236,7 @@ class VexyliconGenerator:
                 if processor.find_by_id(blur_filter_id) is None:
                     defs = processor.get_defs()
                     blur_filter = processor.create_element("filter", id=blur_filter_id)
-                    blur_elem = processor.create_element(
-                        "feGaussianBlur", stdDeviation=f"{self.params.blur}"
-                    )
+                    blur_elem = processor.create_element("feGaussianBlur", stdDeviation=f"{self.params.blur}")
                     blur_filter.append(blur_elem)
                     defs.append(blur_filter)
 
@@ -246,9 +260,7 @@ class VexyliconGenerator:
             small_shape.set("fill-opacity", f"{min_opacity:.3f}")
 
             # Create small bevel step paths using cornerHighlight gradient
-            for i, (path_d, opacity) in enumerate(
-                zip(ring_paths, opacities, strict=False), 1
-            ):
+            for i, (path_d, opacity) in enumerate(zip(ring_paths, opacities, strict=False), 1):
                 small_step = processor.create_element(
                     "path",
                     d=path_d,
@@ -370,28 +382,30 @@ class VexyliconGenerator:
 
         # Parse payload SVG
         try:
-            if isinstance(payload_svg, str | Path):
-                payload_path = (
-                    Path(payload_svg) if isinstance(payload_svg, str) else payload_svg
-                )
-                payload_processor = (
-                    SVGProcessor(payload_path)
-                    if payload_path.exists()
-                    else SVGProcessor(payload_svg)
-                )
-            else:
+            if isinstance(payload_svg, Path) or payload_svg.lstrip().startswith("<"):
                 payload_processor = SVGProcessor(payload_svg)
+            else:
+                payload_processor = SVGProcessor(Path(payload_svg))
         except etree.XMLSyntaxError as e:
             msg = f"Payload SVG is malformed: {e}"
             raise InvalidSVGError(msg) from e
 
-        # Import payload content into main document
+        # Keep the complete SVG: defs, masks, embedded images, inherited styles
+        # and the original coordinate system all belong to the artwork.
         payload_root = payload_processor.root
-        for child in list(payload_root):
-            # Skip certain elements like defs
-            tag = child.tag if isinstance(child.tag, str) else str(child.tag)
-            if not tag.endswith("defs"):
-                payload_group.append(child)
+        if payload_root.tag != processor.ns("svg"):
+            msg = "Payload root must be an SVG element"
+            raise InvalidSVGError(msg)
+        if payload_root.get("viewBox") is None:
+            width = payload_root.get("width", "1200").removesuffix("px")
+            height = payload_root.get("height", "1200").removesuffix("px")
+            payload_root.set("viewBox", f"0 0 {width} {height}")
+        payload_root.set("x", "0")
+        payload_root.set("y", "0")
+        payload_root.set("width", "100%")
+        payload_root.set("height", "100%")
+        self._place_payload(processor, payload_root)
+        payload_group.append(payload_root)
 
         # Find back element and inject payload there
         back_elem = processor.find_by_id("back")
@@ -402,3 +416,21 @@ class VexyliconGenerator:
         else:
             # Fallback: append to root
             processor.root.append(payload_group)
+
+    def _place_payload(self, processor: SVGProcessor, artwork: etree._Element) -> None:
+        """Centre and shift the artwork viewport while keeping the clip fixed."""
+        if self.params.scale == 1 and self.params.size is None and self.params.x_off == self.params.y_off == 0:
+            return
+        left, top, width, height = map(float, processor.root.get("viewBox").replace(",", " ").split())
+        scale = self.params.scale
+        if self.params.size is not None:
+            scale *= self.params.size / max(width, height)
+        placed_width, placed_height = width * scale, height * scale
+        geometry = {
+            "x": left + (width - placed_width) / 2 + self.params.x_off,
+            "y": top + (height - placed_height) / 2 + self.params.y_off,
+            "width": placed_width,
+            "height": placed_height,
+        }
+        for key, value in geometry.items():
+            artwork.set(key, f"{value:.12g}")

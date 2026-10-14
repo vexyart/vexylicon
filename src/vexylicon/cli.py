@@ -18,7 +18,7 @@ from rich.table import Table
 
 from vexylicon import VexyliconGenerator, VexyliconParams
 from vexylicon.core import OpacityProgression, VexyliconError
-from vexylicon.utils import ThemeLoader, BaseSVGBuilder
+from vexylicon.utils import BaseSVGBuilder, ThemeLoader
 
 console = Console()
 
@@ -38,6 +38,10 @@ class VexyliconCLI:
         quality: str | None = None,
         format: str = "svg",
         blur: float = 0.0,
+        scale: float = 1.0,
+        size: float | None = None,
+        x_off: float = 0.0,
+        y_off: float = 0.0,
     ) -> None:
         """Create liquid-glass icon mask with optional payload.
 
@@ -52,6 +56,10 @@ class VexyliconCLI:
             quality: Preset quality level (low/medium/high/ultra)
             format: Output format (svg or png - png requires cairosvg)
             blur: Blur radius for bevel steps in pixels (default: 0)
+            scale: Centred artwork scale relative to the canvas (0.8 = 80%)
+            size: Absolute artwork viewport size in canvas units, before scale
+            x_off: Horizontal offset in canvas units; positive moves right
+            y_off: Vertical offset in canvas units; positive moves down
         """
         try:
             # Create parameters
@@ -62,6 +70,10 @@ class VexyliconCLI:
                 opacity_progression=OpacityProgression(opacity_progression),
                 quality=quality,
                 blur=blur,
+                scale=scale,
+                size=size,
+                x_off=x_off,
+                y_off=y_off,
             )
 
             # Create generator
@@ -117,6 +129,11 @@ class VexyliconCLI:
         quality: str | None = None,
         recursive: bool = False,
         blur: float = 0.0,
+        scale: float = 1.0,
+        size: float | None = None,
+        x_off: float = 0.0,
+        y_off: float = 0.0,
+        suffix: str = "_glass",
     ) -> None:
         """Process multiple SVGs in batch mode.
 
@@ -128,12 +145,21 @@ class VexyliconCLI:
             quality: Preset quality level
             recursive: Process subdirectories recursively
             blur: Blur radius for bevel steps in pixels (default: 0)
+            scale: Centred artwork scale relative to the canvas (0.8 = 80%)
+            size: Absolute artwork viewport size in canvas units, before scale
+            x_off: Horizontal offset in canvas units; positive moves right
+            y_off: Vertical offset in canvas units; positive moves down
+            suffix: Output filename suffix; same-folder runs skip matching outputs
         """
         input_path = Path(input_dir)
         output_path = Path(output_dir)
 
-        if not input_path.exists():
+        if not input_path.is_dir():
             print(f"[red]Error: Input directory does not exist: {input_dir}")
+            sys.exit(1)
+
+        if "/" in suffix or "\\" in suffix or (not suffix and input_path.resolve() == output_path.resolve()):
+            print("[red]Error: suffix must be a filename suffix and nonempty for same-folder output")
             sys.exit(1)
 
         # Create output directory
@@ -141,7 +167,9 @@ class VexyliconCLI:
 
         # Find SVG files
         pattern = "**/*.svg" if recursive else "*.svg"
-        svg_files = list(input_path.glob(pattern))
+        svg_files = sorted(input_path.glob(pattern))
+        if input_path.resolve() == output_path.resolve():
+            svg_files = [path for path in svg_files if not path.stem.endswith(suffix)]
 
         if not svg_files:
             print(f"[yellow]No SVG files found in {input_dir}")
@@ -150,8 +178,20 @@ class VexyliconCLI:
         print(f"[blue]Found {len(svg_files)} SVG files to process")
 
         # Create parameters
-        params = VexyliconParams(steps=steps, quality=quality, blur=blur)
-        generator = VexyliconGenerator(theme=theme, params=params)
+        try:
+            params = VexyliconParams(
+                steps=steps,
+                quality=quality,
+                blur=blur,
+                scale=scale,
+                size=size,
+                x_off=x_off,
+                y_off=y_off,
+            )
+            generator = VexyliconGenerator(theme=theme, params=params)
+        except (ValueError, OSError) as e:
+            print(f"[red]Error: {e}")
+            sys.exit(1)
 
         # Process each file
         success_count = 0
@@ -161,7 +201,7 @@ class VexyliconCLI:
 
                 # Generate output path
                 rel_path = svg_file.relative_to(input_path)
-                out_file = output_path / rel_path.with_stem(f"{rel_path.stem}_glass")
+                out_file = output_path / rel_path.with_stem(f"{rel_path.stem}{suffix}")
                 out_file.parent.mkdir(parents=True, exist_ok=True)
 
                 # Process file
@@ -175,6 +215,8 @@ class VexyliconCLI:
                 print(f"[red]✗ Failed to process {svg_file.name}: {e}")
 
         print(f"\n[green]Successfully processed {success_count}/{len(svg_files)} files")
+        if success_count != len(svg_files):
+            sys.exit(1)
 
     def themes(self) -> None:
         """List available themes."""
